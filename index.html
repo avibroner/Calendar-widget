@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>סדר יום</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #121212;
+            --card-bg: #1e1e1e;
+            --item-bg: #252525;
+            --gold: #daa520;
+            --text-main: #ffffff;
+            --text-dim: #aaaaaa;
+            --accent-blue: #60a5fa;
+            --accent-red: #ff5252;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0; padding: 0; height: 100vh; overflow: hidden; box-sizing: border-box;
+        }
+
+        .widget-container {
+            height: 100%; display: flex; flex-direction: column; padding: 15px; box-sizing: border-box;
+        }
+
+        /* --- Header --- */
+        .header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 15px; border-bottom: 1px solid #333; padding-bottom: 10px; flex-shrink: 0;
+        }
+        .header-title { font-size: 1.2em; color: var(--gold); font-weight: bold; display: flex; align-items: center; gap: 8px; }
+        .date-sub { font-size: 0.85em; color: var(--text-dim); font-weight: normal; }
+
+        #authorize_button {
+            background: var(--accent-blue); color: white; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.9em;
+        }
+
+        /* --- Events List --- */
+        .events-list {
+            flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
+            padding-left: 5px;
+        }
+        
+        .events-list::-webkit-scrollbar { width: 5px; }
+        .events-list::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+
+        /* --- Event Card --- */
+        .event-card {
+            background-color: var(--item-bg);
+            border-radius: 10px;
+            padding: 12px 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-right: 4px solid var(--accent-blue);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            transition: transform 0.2s, background 0.2s;
+            cursor: pointer;
+        }
+
+        .event-card:hover { background-color: #2a2a2a; transform: translateX(-3px); }
+
+        .event-card.current {
+            border-right-color: var(--gold);
+            background: linear-gradient(90deg, rgba(218, 165, 32, 0.1) 0%, var(--item-bg) 100%);
+        }
+
+        .event-info { flex-grow: 1; text-align: right; overflow: hidden; }
+        .event-title { font-size: 1em; font-weight: 600; margin-bottom: 3px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .event-location { font-size: 0.75em; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+        .event-time {
+            text-align: left; min-width: 55px; margin-right: 12px;
+            display: flex; flex-direction: column; align-items: flex-end;
+        }
+        .time-start { font-size: 1.1em; font-weight: bold; color: #fff; line-height: 1; }
+        .time-end { font-size: 0.75em; color: #777; margin-top: 2px; }
+
+        /* --- Modal (חלון קופץ מתוקן) --- */
+        .modal {
+            display: none; position: fixed; z-index: 200; left: 0; top: 0; width: 100%; height: 100%;
+            background-color: rgba(0,0,0,0.8); backdrop-filter: blur(3px);
+            justify-content: center; align-items: center;
+        }
+
+        .modal-content {
+            background-color: #252525;
+            border: 1px solid var(--gold);
+            border-radius: 12px;
+            width: 90%; 
+            max-width: 350px; /* רוחב נוח */
+            
+            /* === התיקון לגלילה === */
+            max-height: 85vh; /* לא יעבור 85% מגובה המסך */
+            overflow-y: auto; /* גלילה פנימית אם התוכן ארוך */
+            display: flex;
+            flex-direction: column;
+            
+            padding: 20px;
+            position: relative;
+            text-align: right;
+            box-shadow: 0 0 30px rgba(0,0,0,0.9);
+            animation: slideUp 0.3s ease;
+        }
+
+        /* עיצוב פס גלילה לחלון הקופץ */
+        .modal-content::-webkit-scrollbar { width: 5px; }
+        .modal-content::-webkit-scrollbar-track { background: transparent; }
+        .modal-content::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
+
+        @keyframes slideUp {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .close-btn {
+            position: absolute; top: 10px; left: 15px;
+            color: #aaa; font-size: 24px; cursor: pointer; z-index: 10;
+        }
+        .close-btn:hover { color: #fff; }
+
+        .modal-title { font-size: 1.3em; color: var(--gold); margin: 15px 0 10px 0; line-height: 1.2; }
+        .modal-time { font-size: 1em; color: #fff; margin-bottom: 10px; font-weight: bold; border-bottom: 1px solid #444; padding-bottom: 10px; display: block;}
+        
+        .modal-desc { 
+            color: #ccc; line-height: 1.5; margin-bottom: 15px; font-size: 0.9em; 
+            white-space: pre-wrap; word-wrap: break-word; /* שבירת שורות ארוכות */
+        }
+
+        .meeting-btn {
+            display: block; width: 100%; padding: 10px;
+            background-color: var(--accent-blue); color: white;
+            text-align: center; text-decoration: none; border-radius: 6px;
+            font-weight: bold; margin-top: auto; /* דוחף לתחתית אם יש מקום */
+            transition: background 0.2s;
+            box-sizing: border-box;
+        }
+        .meeting-btn:hover { background-color: #4da3ff; }
+        .meeting-btn i { margin-left: 8px; }
+
+        .empty-state { text-align: center; color: #666; margin-top: 40px; font-size: 0.9em; }
+
+    </style>
+</head>
+<body>
+
+<div class="widget-container">
+    <div class="header">
+        <div class="header-title">
+            <i class="far fa-calendar-alt"></i> סדר היום
+        </div>
+        <div>
+            <span class="date-sub" id="today-date"></span>
+            <button id="authorize_button" onclick="handleAuthClick()" style="margin-right:10px;">התחבר</button>
+        </div>
+    </div>
+
+    <div id="content" class="events-list">
+        <div class="empty-state"><i class="fas fa-spinner fa-spin"></i> ממתין לחיבור...</div>
+    </div>
+</div>
+
+<div id="eventModal" class="modal">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeModal()">&times;</span>
+        <h2 id="modalTitle" class="modal-title"></h2>
+        <span id="modalTime" class="modal-time"></span>
+        <div id="modalDesc" class="modal-desc"></div>
+        <a id="modalMeetingLink" href="#" target="_blank" class="meeting-btn" style="display:none">
+            <i class="fas fa-video"></i> הצטרף לפגישה
+        </a>
+    </div>
+</div>
+
+<script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+<script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+
+<script>
+    // ==========================================
+    // ⚙️ הגדרות משתמש (הכנס מפתחות כאן)
+    // ==========================================
+    const CLIENT_ID = '28377902980-kbp55850n2c0je7h9f0g99itbpb839qh.apps.googleusercontent.com'; // <--- להדביק כאן
+    const API_KEY = 'AIzaSyDL3qP3SDKQU8xiTOf7GM9w-4YFj2l3-lY';     // <--- להדביק כאן    
+    // ==========================================
+
+    const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest"];
+    const SCOPES = "https://www.googleapis.com/auth/calendar.readonly";
+
+    let tokenClient;
+    let gapiInited = false, gisInited = false;
+    let todayEvents = []; 
+
+    // תאריך בכותרת
+    document.getElementById('today-date').innerText = new Date().toLocaleDateString('he-IL', { day: 'numeric', month: 'long' });
+
+    function gapiLoaded() { gapi.load('client', initializeGapiClient); }
+    async function initializeGapiClient() {
+        await gapi.client.init({ apiKey: API_KEY, discoveryDocs: DISCOVERY_DOCS });
+        gapiInited = true; maybeEnableButtons();
+    }
+    function gisLoaded() {
+        tokenClient = google.accounts.oauth2.initTokenClient({ client_id: CLIENT_ID, scope: SCOPES, callback: '' });
+        gisInited = true; maybeEnableButtons();
+    }
+    function maybeEnableButtons() { if (gapiInited && gisInited) { /* Ready */ } }
+
+    function handleAuthClick() {
+        tokenClient.callback = async (resp) => {
+            if (resp.error) throw (resp);
+            document.getElementById('authorize_button').style.display = 'none';
+            await listUpcomingEvents();
+        };
+        tokenClient.requestAccessToken({prompt: ''});
+    }
+
+    async function listUpcomingEvents() {
+        const container = document.getElementById('content');
+        container.innerHTML = '<div class="empty-state"><i class="fas fa-spinner fa-spin"></i> טוען...</div>';
+
+        const now = new Date();
+        const startOfDay = new Date(now); startOfDay.setHours(0,0,0,0);
+        const endOfDay = new Date(now); endOfDay.setHours(23,59,59,999);
+
+        try {
+            const request = {
+                'calendarId': 'primary',
+                'timeMin': startOfDay.toISOString(),
+                'timeMax': endOfDay.toISOString(),
+                'showDeleted': false,
+                'singleEvents': true,
+                'maxResults': 50,
+                'orderBy': 'startTime',
+            };
+            
+            const response = await gapi.client.calendar.events.list(request);
+            todayEvents = response.result.items;
+
+            renderEvents(todayEvents, container);
+
+        } catch (err) {
+            container.innerHTML = '<div class="empty-state" style="color:#ff5252">שגיאה בטעינה</div>';
+            console.error(err);
+        }
+    }
+
+    function renderEvents(events, container) {
+        container.innerHTML = '';
+        
+        if (!events || events.length === 0) {
+            container.innerHTML = '<div class="empty-state">אין אירועים להיום 🎉</div>';
+            return;
+        }
+
+        events.forEach((event, index) => {
+            let whenStart = event.start.dateTime;
+            let whenEnd = event.end.dateTime;
+            let isAllDay = false;
+            
+            if (!whenStart) {
+                whenStart = event.start.date;
+                isAllDay = true;
+            }
+
+            const startDate = new Date(whenStart);
+            const endDate = whenEnd ? new Date(whenEnd) : null;
+            
+            const timeStartStr = isAllDay ? 'יום' : startDate.toLocaleTimeString('he-IL', {hour: '2-digit', minute:'2-digit'});
+            const timeEndStr = (endDate && !isAllDay) ? endDate.toLocaleTimeString('he-IL', {hour: '2-digit', minute:'2-digit'}) : '';
+
+            const currentTs = new Date().getTime();
+            const startTs = startDate.getTime();
+            const endTs = endDate ? endDate.getTime() : startTs + 3600000;
+            const isCurrent = !isAllDay && (currentTs >= startTs && currentTs < endTs);
+
+            const div = document.createElement('div');
+            div.className = `event-card ${isCurrent ? 'current' : ''}`;
+            div.onclick = () => openModal(index); 
+
+            div.innerHTML = `
+                <div class="event-info">
+                    <div class="event-title">${event.summary}</div>
+                    ${event.location ? `<div class="event-location"><i class="fas fa-map-marker-alt"></i> ${event.location}</div>` : ''}
+                </div>
+                <div class="event-time">
+                    <span class="time-start">${timeStartStr}</span>
+                    <span class="time-end">${timeEndStr}</span>
+                </div>
+            `;
+            container.appendChild(div);
+        });
+    }
+
+    // --- Modal Logic ---
+    const modal = document.getElementById('eventModal');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalTime = document.getElementById('modalTime');
+    const modalDesc = document.getElementById('modalDesc');
+    const modalBtn = document.getElementById('modalMeetingLink');
+
+    function openModal(eventIndex) {
+        const event = todayEvents[eventIndex];
+        if (!event) return;
+
+        modalTitle.innerText = event.summary;
+        
+        const start = event.start.dateTime ? new Date(event.start.dateTime) : null;
+        const end = event.end.dateTime ? new Date(event.end.dateTime) : null;
+        if (start) {
+            modalTime.innerText = `${start.toLocaleTimeString('he-IL', {hour:'2-digit', minute:'2-digit'})} - ${end ? end.toLocaleTimeString('he-IL', {hour:'2-digit', minute:'2-digit'}) : ''}`;
+        } else {
+            modalTime.innerText = "כל היום";
+        }
+
+        modalDesc.innerHTML = event.description || "אין תיאור נוסף";
+
+        // זיהוי לינק לפגישה
+        let meetingLink = null;
+        if (event.conferenceData && event.conferenceData.entryPoints) {
+            event.conferenceData.entryPoints.forEach(ep => {
+                if (ep.entryPointType === 'video') meetingLink = ep.uri;
+            });
+        }
+        
+        if (!meetingLink && (event.description || event.location)) {
+            const textToCheck = (event.description || '') + ' ' + (event.location || '');
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+            const matches = textToCheck.match(urlRegex);
+            if (matches) {
+                const videoLink = matches.find(url => url.includes('zoom.us') || url.includes('teams.microsoft'));
+                meetingLink = videoLink || matches[0];
+            }
+        }
+
+        if (meetingLink) {
+            modalBtn.href = meetingLink;
+            modalBtn.style.display = 'block';
+            modalBtn.innerHTML = meetingLink.includes('zoom') ? '<i class="fas fa-video"></i> כניסה ל-Zoom' : '<i class="fas fa-video"></i> הצטרף לפגישה';
+        } else {
+            modalBtn.style.display = 'none';
+        }
+
+        modal.style.display = 'flex';
+    }
+
+    function closeModal() {
+        modal.style.display = 'none';
+    }
+
+    window.onclick = function(event) {
+        if (event.target == modal) {
+            closeModal();
+        }
+    }
+</script>
+
+</body>
+</html>
