@@ -184,10 +184,10 @@
 
 <script>
     // ==========================================
-    // ⚙️ הגדרות משתמש (הכנס מפתחות כאן)
+    // ⚙️ הגדרות משתמש
     // ==========================================
-    const CLIENT_ID = '28377902980-kbp55850n2c0je7h9f0g99itbpb839qh.apps.googleusercontent.com'; // <--- להדביק כאן
-    const API_KEY = 'AIzaSyDL3qP3SDKQU8xiTOf7GM9w-4YFj2l3-lY';     // <--- להדביק כאן    
+    const CLIENT_ID = '28377902980-kbp55850n2c0je7h9f0g99itbpb839qh.apps.googleusercontent.com';
+    const API_KEY = 'AIzaSyDL3qP3SDKQU8xiTOf7GM9w-4YFj2l3-lY';    
     // ==========================================
 
     const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest"];
@@ -195,39 +195,124 @@
 
     let tokenClient;
     let gapiInited = false, gisInited = false;
-    let todayEvents = []; 
+    let todayEvents = [];
+    let autoRefreshTimer = null; // טיימר לחידוש הטוקן
 
-    // תאריך בכותרת
     document.getElementById('today-date').innerText = new Date().toLocaleDateString('he-IL', { day: 'numeric', month: 'long' });
 
     function gapiLoaded() { gapi.load('client', initializeGapiClient); }
+    
     async function initializeGapiClient() {
         await gapi.client.init({ apiKey: API_KEY, discoveryDocs: DISCOVERY_DOCS });
-        gapiInited = true; maybeEnableButtons();
+        gapiInited = true; 
+        maybeRestoreSession(); // בדיקה אם יש טוקן שמור
     }
+
     function gisLoaded() {
-        tokenClient = google.accounts.oauth2.initTokenClient({ client_id: CLIENT_ID, scope: SCOPES, callback: '' });
-        gisInited = true; maybeEnableButtons();
+        // הגדרת ה-Callback פעם אחת בצורה מסודרת
+        tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: CLIENT_ID,
+            scope: SCOPES,
+            callback: handleTokenResponse // הפונקציה שתטפל בטוקן שתקבל
+        });
+        gisInited = true;
+        maybeRestoreSession();
     }
-    function maybeEnableButtons() { if (gapiInited && gisInited) { /* Ready */ } }
+
+    // --- ניהול טוקן ושמירה ---
+
+    function handleTokenResponse(resp) {
+        if (resp.error) { console.error(resp); return; }
+
+        // 1. שמירת הטוקן וזמן התפוגה ב-localStorage
+        const expiresInSeconds = resp.expires_in; // בדרך כלל 3600 (שעה)
+        const expirationTime = Date.now() + (expiresInSeconds * 1000);
+        
+        localStorage.setItem('google_access_token', resp.access_token);
+        localStorage.setItem('google_token_expiry', expirationTime);
+
+        // 2. הגדרת הטוקן במערכת
+        gapi.client.setToken(resp); // או {access_token: resp.access_token}
+
+        // 3. הסתרת כפתור התחברות והצגת התוכן
+        document.getElementById('authorize_button').style.display = 'none';
+        
+        // קריאה ראשונית לאירועים
+        listUpcomingEvents();
+        
+        // הפעלת סנכרון כל 15 דקות (כפי שביקשת)
+        // מנקים טיימר קודם אם קיים כדי למנוע כפילויות
+        if (window.eventsInterval) clearInterval(window.eventsInterval);
+        window.eventsInterval = setInterval(listUpcomingEvents, 15 * 60 * 1000);
+
+        // 4. תזמון חידוש טוקן אוטומטי (5 דקות לפני שפג התוקף)
+        scheduleTokenRefresh(expiresInSeconds);
+    }
+
+    function maybeRestoreSession() {
+        if (!gapiInited || !gisInited) return;
+
+        // בדיקה האם יש טוקן שמור בזיכרון הדפדפן
+        const storedToken = localStorage.getItem('google_access_token');
+        const storedExpiry = localStorage.getItem('google_token_expiry');
+
+        if (storedToken && storedExpiry && Date.now() < storedExpiry) {
+            console.log("שחזור טוקן מהזיכרון...");
+            
+            // שחזור הטוקן לתוך gapi
+            gapi.client.setToken({ access_token: storedToken });
+            
+            // חישוב כמה זמן נותר כדי לתזמן את החידוש הבא
+            const remainingSeconds = (storedExpiry - Date.now()) / 1000;
+            
+            // הפעלת המערכת כאילו המשתמש התחבר עכשיו
+            document.getElementById('authorize_button').style.display = 'none';
+            listUpcomingEvents();
+            
+            if (window.eventsInterval) clearInterval(window.eventsInterval);
+            window.eventsInterval = setInterval(listUpcomingEvents, 15 * 60 * 1000);
+            
+            scheduleTokenRefresh(remainingSeconds);
+        } else {
+            // אין טוקן או שפג תוקפו - מציג כפתור התחברות
+            document.getElementById('authorize_button').style.display = 'block';
+        }
+    }
+
+    function scheduleTokenRefresh(secondsLeft) {
+        // נחדש את הטוקן 5 דקות לפני שהוא נגמר (או פחות אם נשאר מעט זמן)
+        const refreshTimeDetails = Math.max(secondsLeft - 300, 10); // מינימום 10 שניות
+        
+        console.log(`חידוש טוקן מתוזמן לעוד ${Math.floor(refreshTimeDetails/60)} דקות`);
+
+        if (autoRefreshTimer) clearTimeout(autoRefreshTimer);
+        
+        autoRefreshTimer = setTimeout(() => {
+            console.log("מחדש טוקן אוטומטית...");
+            // מבקש טוקן חדש ללא הקפצת חלון (prompt: '')
+            // שים לב: זה יעבוד רק אם המשתמש מחובר לגוגל בדפדפן
+            tokenClient.requestAccessToken({ prompt: '' });
+        }, refreshTimeDetails * 1000);
+    }
 
     function handleAuthClick() {
-        tokenClient.callback = async (resp) => {
-            if (resp.error) throw (resp);
-            document.getElementById('authorize_button').style.display = 'none';
-            
-            // קריאה ראשונית לנתונים
-            await listUpcomingEvents();
-
-            // --- תוספת לסנכרון אוטומטי ---
-            setInterval(listUpcomingEvents, 15 * 60 * 1000); 
-        };
-        tokenClient.requestAccessToken({prompt: ''});
+        if (gapi.client.getToken() === null) {
+            // פעם ראשונה - מבקש אישור משתמש מלא
+            tokenClient.requestAccessToken({prompt: 'consent'});
+        } else {
+            // ניסיון לחיבור שקט אם יש בעיה
+            tokenClient.requestAccessToken({prompt: ''});
+        }
     }
+
+    // --- המשך הקוד הרגיל שלך (שליפת אירועים וכו') ---
 
     async function listUpcomingEvents() {
         const container = document.getElementById('content');
-        container.innerHTML = '<div class="empty-state"><i class="fas fa-spinner fa-spin"></i> טוען...</div>';
+        // לא מנקים את המסך בטעינה חוזרת כדי למנוע ריצוד, אלא רק אם ריק
+        if (!container.innerHTML.includes('event-card')) {
+             container.innerHTML = '<div class="empty-state"><i class="fas fa-spinner fa-spin"></i> טוען...</div>';
+        }
 
         const now = new Date();
         const startOfDay = new Date(now); startOfDay.setHours(0,0,0,0);
@@ -246,12 +331,18 @@
             
             const response = await gapi.client.calendar.events.list(request);
             todayEvents = response.result.items;
-
             renderEvents(todayEvents, container);
 
         } catch (err) {
-            container.innerHTML = '<div class="empty-state" style="color:#ff5252">שגיאה בטעינה</div>';
-            console.error(err);
+            console.error('Error loading events:', err);
+            // אם השגיאה קשורה לטוקן (401/403), ננסה לחדש אותו או להציג כפתור
+            if (err.status === 401 || err.status === 403) {
+                 localStorage.removeItem('google_access_token'); // מחיקת טוקן פגום
+                 document.getElementById('authorize_button').style.display = 'block';
+                 container.innerHTML = '<div class="empty-state">נדרש חיבור מחדש</div>';
+            } else {
+                 container.innerHTML = '<div class="empty-state" style="color:#ff5252">שגיאה בטעינה</div>';
+            }
         }
     }
 
@@ -302,7 +393,7 @@
         });
     }
 
-    // --- Modal Logic ---
+    // --- Modal Logic (ללא שינוי) ---
     const modal = document.getElementById('eventModal');
     const modalTitle = document.getElementById('modalTitle');
     const modalTime = document.getElementById('modalTime');
@@ -325,7 +416,6 @@
 
         modalDesc.innerHTML = event.description || "אין תיאור נוסף";
 
-        // זיהוי לינק לפגישה
         let meetingLink = null;
         if (event.conferenceData && event.conferenceData.entryPoints) {
             event.conferenceData.entryPoints.forEach(ep => {
@@ -368,5 +458,4 @@
 </body>
 
 </html>
-
 
