@@ -215,7 +215,12 @@
         tokenClient.callback = async (resp) => {
             if (resp.error) throw (resp);
             document.getElementById('authorize_button').style.display = 'none';
+            
+            // קריאה ראשונית לנתונים
             await listUpcomingEvents();
+
+            // --- תוספת לסנכרון אוטומטי ---
+            setInterval(listUpcomingEvents, 15 * 60 * 1000); 
         };
         tokenClient.requestAccessToken({prompt: ''});
     }
@@ -363,4 +368,5 @@
 </body>
 
 </html>
+
 
