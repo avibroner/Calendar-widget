@@ -196,7 +196,8 @@
     let tokenClient;
     let gapiInited = false, gisInited = false;
     let todayEvents = [];
-    let autoRefreshTimer = null; // טיימר לחידוש הטוקן
+    let autoRefreshTimer = null;
+    let isRetrying = false; // משתנה למניעת לולאות אינסופיות של שגיאות
 
     document.getElementById('today-date').innerText = new Date().toLocaleDateString('he-IL', { day: 'numeric', month: 'long' });
 
@@ -205,68 +206,59 @@
     async function initializeGapiClient() {
         await gapi.client.init({ apiKey: API_KEY, discoveryDocs: DISCOVERY_DOCS });
         gapiInited = true; 
-        maybeRestoreSession(); // בדיקה אם יש טוקן שמור
+        maybeRestoreSession();
     }
 
     function gisLoaded() {
-        // הגדרת ה-Callback פעם אחת בצורה מסודרת
         tokenClient = google.accounts.oauth2.initTokenClient({
             client_id: CLIENT_ID,
             scope: SCOPES,
-            callback: handleTokenResponse // הפונקציה שתטפל בטוקן שתקבל
+            callback: handleTokenResponse
         });
         gisInited = true;
         maybeRestoreSession();
     }
 
-    // --- ניהול טוקן ושמירה ---
-
     function handleTokenResponse(resp) {
         if (resp.error) { console.error(resp); return; }
 
-        // 1. שמירת הטוקן וזמן התפוגה ב-localStorage
-        const expiresInSeconds = resp.expires_in; // בדרך כלל 3600 (שעה)
+        // איפוס דגל הניסיון החוזר כי הצלחנו לקבל טוקן
+        isRetrying = false;
+
+        const expiresInSeconds = resp.expires_in || 3600; 
         const expirationTime = Date.now() + (expiresInSeconds * 1000);
         
+        // שמירה בזיכרון הדפדפן
         localStorage.setItem('google_access_token', resp.access_token);
         localStorage.setItem('google_token_expiry', expirationTime);
 
-        // 2. הגדרת הטוקן במערכת
-        gapi.client.setToken(resp); // או {access_token: resp.access_token}
-
-        // 3. הסתרת כפתור התחברות והצגת התוכן
+        gapi.client.setToken(resp);
         document.getElementById('authorize_button').style.display = 'none';
         
-        // קריאה ראשונית לאירועים
+        // טעינת נתונים
         listUpcomingEvents();
         
-        // הפעלת סנכרון כל 15 דקות (כפי שביקשת)
-        // מנקים טיימר קודם אם קיים כדי למנוע כפילויות
+        // איפוס טיימר סנכרון (15 דקות)
         if (window.eventsInterval) clearInterval(window.eventsInterval);
         window.eventsInterval = setInterval(listUpcomingEvents, 15 * 60 * 1000);
 
-        // 4. תזמון חידוש טוקן אוטומטי (5 דקות לפני שפג התוקף)
+        // תזמון חידוש טוקן שקט
         scheduleTokenRefresh(expiresInSeconds);
     }
 
     function maybeRestoreSession() {
         if (!gapiInited || !gisInited) return;
 
-        // בדיקה האם יש טוקן שמור בזיכרון הדפדפן
         const storedToken = localStorage.getItem('google_access_token');
         const storedExpiry = localStorage.getItem('google_token_expiry');
 
         if (storedToken && storedExpiry && Date.now() < storedExpiry) {
             console.log("שחזור טוקן מהזיכרון...");
-            
-            // שחזור הטוקן לתוך gapi
             gapi.client.setToken({ access_token: storedToken });
             
-            // חישוב כמה זמן נותר כדי לתזמן את החידוש הבא
             const remainingSeconds = (storedExpiry - Date.now()) / 1000;
-            
-            // הפעלת המערכת כאילו המשתמש התחבר עכשיו
             document.getElementById('authorize_button').style.display = 'none';
+            
             listUpcomingEvents();
             
             if (window.eventsInterval) clearInterval(window.eventsInterval);
@@ -274,42 +266,32 @@
             
             scheduleTokenRefresh(remainingSeconds);
         } else {
-            // אין טוקן או שפג תוקפו - מציג כפתור התחברות
             document.getElementById('authorize_button').style.display = 'block';
         }
     }
 
     function scheduleTokenRefresh(secondsLeft) {
-        // נחדש את הטוקן 5 דקות לפני שהוא נגמר (או פחות אם נשאר מעט זמן)
-        const refreshTimeDetails = Math.max(secondsLeft - 300, 10); // מינימום 10 שניות
+        // מנסה לחדש 5 דקות לפני הסוף, או מיד אם נשאר קצת זמן
+        const refreshTimeDetails = Math.max(secondsLeft - 300, 10);
         
-        console.log(`חידוש טוקן מתוזמן לעוד ${Math.floor(refreshTimeDetails/60)} דקות`);
-
         if (autoRefreshTimer) clearTimeout(autoRefreshTimer);
         
         autoRefreshTimer = setTimeout(() => {
             console.log("מחדש טוקן אוטומטית...");
-            // מבקש טוקן חדש ללא הקפצת חלון (prompt: '')
-            // שים לב: זה יעבוד רק אם המשתמש מחובר לגוגל בדפדפן
-            tokenClient.requestAccessToken({ prompt: '' });
+            if (tokenClient) tokenClient.requestAccessToken({ prompt: '' });
         }, refreshTimeDetails * 1000);
     }
 
     function handleAuthClick() {
         if (gapi.client.getToken() === null) {
-            // פעם ראשונה - מבקש אישור משתמש מלא
             tokenClient.requestAccessToken({prompt: 'consent'});
         } else {
-            // ניסיון לחיבור שקט אם יש בעיה
             tokenClient.requestAccessToken({prompt: ''});
         }
     }
 
-    // --- המשך הקוד הרגיל שלך (שליפת אירועים וכו') ---
-
     async function listUpcomingEvents() {
         const container = document.getElementById('content');
-        // לא מנקים את המסך בטעינה חוזרת כדי למנוע ריצוד, אלא רק אם ריק
         if (!container.innerHTML.includes('event-card')) {
              container.innerHTML = '<div class="empty-state"><i class="fas fa-spinner fa-spin"></i> טוען...</div>';
         }
@@ -335,11 +317,22 @@
 
         } catch (err) {
             console.error('Error loading events:', err);
-            // אם השגיאה קשורה לטוקן (401/403), ננסה לחדש אותו או להציג כפתור
-            if (err.status === 401 || err.status === 403) {
-                 localStorage.removeItem('google_access_token'); // מחיקת טוקן פגום
-                 document.getElementById('authorize_button').style.display = 'block';
-                 container.innerHTML = '<div class="empty-state">נדרש חיבור מחדש</div>';
+
+            // === התיקון הגדול: טיפול בשגיאת התנתקות ===
+            if ((err.status === 401 || err.status === 403)) {
+                
+                // אם זו פעם ראשונה שזה קורה - נסה לחדש טוקן לבד
+                if (!isRetrying) {
+                    console.log("הטוקן פג (שגיאה 401), מנסה לחדש אוטומטית...");
+                    isRetrying = true; // מסמנים שאנחנו בתוך ניסיון תיקון
+                    tokenClient.requestAccessToken({ prompt: '' }); // בקשת טוקן שקטה
+                    return; // יוצאים מהפונקציה, ה-Callback יפעיל אותה שוב כשיגיע הטוקן
+                }
+                
+                // אם כבר ניסינו וזה עדיין נכשל - רק אז מנתקים
+                localStorage.removeItem('google_access_token');
+                document.getElementById('authorize_button').style.display = 'block';
+                container.innerHTML = '<div class="empty-state">נדרש חיבור מחדש</div>';
             } else {
                  container.innerHTML = '<div class="empty-state" style="color:#ff5252">שגיאה בטעינה</div>';
             }
@@ -458,4 +451,5 @@
 </body>
 
 </html>
+
 
